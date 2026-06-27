@@ -1,0 +1,25 @@
+# Rust
+/target
+**/*.rs.bk
+*.pdb
+
+# Models & weights (never commit; pulled separately)
+/models
+*.gguf
+*.safetensors
+*.bin
+
+# Local config / secrets
+.env
+*.local.toml
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs & benchmark scratch
+*.log
+/bench/results/
