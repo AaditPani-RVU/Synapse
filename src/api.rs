@@ -4,6 +4,7 @@
 //! `/api/tags`, and `/api/version` here, swapping NORA onto Synapse is a one-line
 //! base-URL change (point it at this server's port instead of 11434).
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use axum::{
@@ -88,33 +89,62 @@ pub async fn chat(State(state): State<AppState>, Json(req): Json<OllamaChatReque
     };
 
     if stream_mode {
+        // Stop right after the first Err (inclusive) so a mid-stream failure is
+        // reported instead of the connection just going quiet.
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stopped_for_filter = Arc::clone(&stopped);
+        let raw = token_stream.take_while(move |item| {
+            let already_stopped = stopped_for_filter.load(Ordering::SeqCst);
+            if item.is_err() {
+                stopped_for_filter.store(true, Ordering::SeqCst);
+            }
+            futures::future::ready(!already_stopped)
+        });
+
         let m = model.clone();
-        let chunks = token_stream.map(move |chunk| {
-            to_ndjson(&json!({
+        let chunks = raw.map(move |item| match item {
+            Ok(text) => to_ndjson(&json!({
                 "model": m,
                 "created_at": now(),
-                "message": { "role": "assistant", "content": chunk },
+                "message": { "role": "assistant", "content": text },
                 "done": false
-            }))
+            })),
+            Err(e) => to_ndjson(&json!({
+                "model": m,
+                "created_at": now(),
+                "message": { "role": "assistant", "content": "" },
+                "done": true,
+                "done_reason": "error",
+                "error": e
+            })),
         });
 
         let m2 = model;
         let tail = futures::stream::once(async move {
-            to_ndjson(&json!({
-                "model": m2,
-                "created_at": now(),
-                "message": { "role": "assistant", "content": "" },
-                "done": true,
-                "done_reason": "stop"
-            }))
-        });
+            if stopped.load(Ordering::SeqCst) {
+                None
+            } else {
+                Some(to_ndjson(&json!({
+                    "model": m2,
+                    "created_at": now(),
+                    "message": { "role": "assistant", "content": "" },
+                    "done": true,
+                    "done_reason": "stop"
+                })))
+            }
+        })
+        .filter_map(futures::future::ready);
 
         Response::builder()
             .header("content-type", "application/x-ndjson")
             .body(Body::from_stream(chunks.chain(tail)))
             .unwrap()
     } else {
-        let full: String = token_stream.collect::<Vec<_>>().await.concat();
+        let results: Vec<Result<String, String>> = token_stream.collect().await;
+        if let Some(e) = results.iter().find_map(|r| r.as_ref().err()) {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))).into_response();
+        }
+        let full: String = results.into_iter().map(Result::unwrap).collect();
         Json(json!({
             "model": model,
             "created_at": now(),

@@ -10,8 +10,10 @@ use futures::stream::{Stream, StreamExt};
 use std::pin::Pin;
 use std::time::Duration;
 
-/// A streamed sequence of generated text chunks.
-pub type TokenStream = Pin<Box<dyn Stream<Item = String> + Send>>;
+/// A streamed sequence of generated text chunks. `Err` carries a message for a
+/// failure mid-generation (e.g. the backend produced NaN logits) so callers can
+/// surface it instead of silently ending the stream.
+pub type TokenStream = Pin<Box<dyn Stream<Item = Result<String, String>> + Send>>;
 
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
@@ -21,6 +23,7 @@ pub struct ChatMessage {
 
 #[derive(Debug, Clone)]
 pub struct GenerateRequest {
+    #[allow(dead_code)]
     pub model: String,
     pub prompt: String,
     pub messages: Vec<ChatMessage>,
@@ -29,7 +32,7 @@ pub struct GenerateRequest {
 /// The contract every Synapse engine implements. Keeping this trait stable is
 /// what lets us swap the stub for mistral.rs without touching the API layer.
 #[async_trait]
-pub trait Engine: Send + Sync {
+pub trait Engine: Send + Sync + 'static {
     fn model_name(&self) -> String;
     async fn generate(&self, req: GenerateRequest) -> anyhow::Result<TokenStream>;
 }
@@ -66,7 +69,7 @@ impl Engine for StubEngine {
 
         let stream = futures::stream::iter(words).then(|w| async move {
             tokio::time::sleep(Duration::from_millis(15)).await;
-            w
+            Ok(w)
         });
 
         Ok(Box::pin(stream))

@@ -1,12 +1,9 @@
 //! Synapse -- the inference nervous system between NeuroSym-AI and N.O.R.A.
-//!
-//! Phase 0: a minimal, Ollama-compatible server backed by a stub engine. Its only
-//! job is to prove the wiring -- NORA can talk to Synapse with a one-line config
-//! change -- and to give us a baseline to benchmark every later pillar against.
 
 mod api;
 mod config;
 mod engine;
+mod mistral_engine;
 mod pillars;
 
 use std::sync::Arc;
@@ -19,7 +16,8 @@ use tracing_subscriber::EnvFilter;
 
 use crate::api::AppState;
 use crate::config::Config;
-use crate::engine::StubEngine;
+use crate::engine::{Engine, StubEngine};
+use crate::mistral_engine::MistralEngine;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -30,14 +28,27 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cfg = Config::from_env();
+
+    let engine: Arc<dyn Engine> = if let Some(dir) = &cfg.gguf_dir {
+        tracing::info!(model = %cfg.model, force_cpu = cfg.force_cpu, "engine: GGUF");
+        Arc::new(
+            MistralEngine::from_gguf(dir, &cfg.gguf_file, cfg.model.clone(), cfg.force_cpu).await?,
+        )
+    } else if let Some(hf_id) = &cfg.hf_model {
+        tracing::info!(model = %cfg.model, "engine: HuggingFace ISQ");
+        Arc::new(MistralEngine::from_hf(hf_id, cfg.model.clone()).await?)
+    } else {
+        tracing::info!(model = %cfg.model, "engine: stub (set SYNAPSE_GGUF_DIR or SYNAPSE_HF_MODEL to use a real model)");
+        Arc::new(StubEngine::new(cfg.model.clone()))
+    };
+
     tracing::info!(
         host = %cfg.host,
         port = cfg.port,
-        model = %cfg.model,
-        "starting Synapse (Phase 0: stub engine)"
+        model = %engine.model_name(),
+        "Synapse ready"
     );
 
-    let engine = Arc::new(StubEngine::new(cfg.model.clone()));
     let state = AppState { engine };
 
     let app = Router::new()

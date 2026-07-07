@@ -1,6 +1,2 @@
-# MSVC toolchain: the standard Windows target, required by the CUDA toolchain we
-# add later for the mistral.rs backend. (The GNU toolchain was a dead end on this
-# machine: a stale C:\MinGW shadows Rust's tools and rust-mingw ships no 64-bit
-# dlltool for raw-dylib crates.) Needs the VS C++ Build Tools linker installed.
 [toolchain]
-channel = "stable-x86_64-pc-windows-msvc"
+channel = "stable-x86_64-unknown-linux-gnu"
