@@ -10,7 +10,8 @@ by fusing the agent and its safety layer directly into the decoder.*
 <br/>
 
 [![Rust](https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Status](https://img.shields.io/badge/status-Phase%200%20%C2%B7%20Foundation-blue?style=for-the-badge)](./PLAN.md)
+[![Status](https://img.shields.io/badge/status-Phase%200%20%C2%B7%20engine%20wired-blue?style=for-the-badge)](./PLAN.md)
+[![CUDA](https://img.shields.io/badge/CUDA-12.4-76B900?style=for-the-badge&logo=nvidia&logoColor=white)]()
 [![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](#-license)
 [![Local first](https://img.shields.io/badge/100%25-local%20%C2%B7%20offline-orange?style=for-the-badge)]()
 
