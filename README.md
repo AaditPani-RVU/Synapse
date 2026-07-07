@@ -100,16 +100,17 @@ the benchmark harness** are hand-built — that's where the substance is.
 
 | Phase | Focus | State |
 |:---:|:---|:---:|
-| **0** | **Foundation** — Ollama-compatible server, `Engine` seam, pillar stubs | 🟢 **wiring verified** |
+| **0** | **Foundation** — Ollama-compatible server, real `mistral.rs` engine (GGUF + HF/ISQ, CUDA) | 🟢 **inference live** |
 | **1** | **Grammar Gate** — constrained decoding from NeuroSym policies | ⚪ next |
 | **2** | **Prefix Vault** — KV-cache prefix reuse | ⚪ planned |
 | **3** | **Echo Drafter** — behavioral speculative decoding | ⚪ planned |
 | **4** | **Router** — intent-based model routing | ⚪ planned |
 | **5** | **Benchmark & demo** — A/B vs stock Ollama, write-up | ⚪ planned |
 
-<sub>Phase 0 today: an Ollama-compatible server backed by a stub engine, proving the
-NORA wiring end to end. The real model (`mistral.rs`, ~1.5B int4) and the pillars land
-next. Full plan → **[`PLAN.md`](./PLAN.md)** · research grounding →
+<sub>Phase 0 today: an Ollama-compatible server streaming real tokens from
+`mistral.rs` (GGUF or HuggingFace+ISQ, CUDA-accelerated) — the four pillars are
+declared as seams (`src/pillars/`) and land one phase at a time starting with
+Grammar Gate. Full plan → **[`PLAN.md`](./PLAN.md)** · research grounding →
 **[`LITERATURE_SURVEY.md`](./LITERATURE_SURVEY.md)**.</sub>
 
 ---
@@ -117,7 +118,13 @@ next. Full plan → **[`PLAN.md`](./PLAN.md)** · research grounding →
 ## 🚀 Quickstart
 
 ```sh
-cargo run                       # serves http://127.0.0.1:11435
+# no model configured -> stub engine, just proves the wiring
+cargo run                                    # serves http://127.0.0.1:11435
+
+# point at a local GGUF file -> real mistral.rs inference (CUDA if available)
+SYNAPSE_GGUF_DIR=/models/qwen2.5-1.5b-instruct \
+SYNAPSE_MODEL=qwen2.5-1.5b \
+cargo run --release
 ```
 
 ```sh
@@ -126,7 +133,7 @@ curl http://127.0.0.1:11435/api/tags
 
 # chat — streaming NDJSON, exactly like Ollama
 curl http://127.0.0.1:11435/api/chat -d '{
-  "model": "synapse-stub",
+  "model": "qwen2.5-1.5b",
   "messages": [{ "role": "user", "content": "hello synapse" }]
 }'
 ```
@@ -139,6 +146,14 @@ curl http://127.0.0.1:11435/api/chat -d '{
 | `SYNAPSE_HOST` | `127.0.0.1` | bind address |
 | `SYNAPSE_PORT` | `11435` | beside Ollama's `11434`, for honest A/B benchmarking |
 | `SYNAPSE_MODEL` | `synapse-stub` | advertised model name |
+| `SYNAPSE_GGUF_DIR` | *(unset)* | dir with a local GGUF file → loads the real engine |
+| `SYNAPSE_GGUF_FILE` | `model.gguf` | filename inside `SYNAPSE_GGUF_DIR` |
+| `SYNAPSE_HF_MODEL` | *(unset)* | HuggingFace model ID, downloaded + ISQ-quantized (used when `SYNAPSE_GGUF_DIR` is unset) |
+| `SYNAPSE_FORCE_CPU` | *(unset)* | force CPU inference — set this if your GPU's compute capability is <8.0 and hits F16/BF16 NaNs on CUDA |
+
+If neither `SYNAPSE_GGUF_DIR` nor `SYNAPSE_HF_MODEL` is set, Synapse falls back to
+the `StubEngine` (echoes input) so the server + N.O.R.A wiring can be tested without
+a GPU or a model download.
 
 </details>
 
@@ -152,10 +167,11 @@ Set NORA's Ollama provider base URL to **`http://127.0.0.1:11435`**. That's the 
 
 ```
 src/
-├── main.rs           server bootstrap
+├── main.rs           server bootstrap, engine selection (stub / GGUF / HF)
 ├── config.rs         env-based config
 ├── api.rs            Ollama-compatible endpoints (/api/chat, /api/tags, …)
-├── engine.rs         Engine trait (the seam) + Phase 0 StubEngine
+├── engine.rs         Engine trait (the seam) + StubEngine
+├── mistral_engine.rs MistralEngine — real inference via mistral.rs (GGUF + HF/ISQ)
 └── pillars/
     ├── grammar_gate.rs   🛡️ Pillar 1 — constrained decoding
     ├── prefix_vault.rs   🗄️ Pillar 2 — KV prefix reuse
@@ -179,9 +195,13 @@ Synapse is the third piece of a vertically-integrated, fully-local agentic stack
 
 ## 🔧 Toolchain notes
 
-Builds with the Rust **MSVC** toolchain (the standard Windows target, required by the
-CUDA toolchain used later for the `mistral.rs` backend). Dev target is a **~1.5B int4**
-model on a 4 GB GPU, with a CPU fallback for larger models.
+Builds with stable Rust on `x86_64-unknown-linux-gnu`. Dev machine is a **4 GB GTX
+1650 (sm_75) + CUDA 12.4** — that compute capability predates hardware BF16, so
+`mistral.rs`'s `Auto` dtype selection can silently pick an F16 CUDA path that
+overflows into NaN logits. Synapse works around this by driving `mistral.rs`'s
+lower-level loader directly with an explicit dtype (see `mistral_engine.rs`), and
+exposes `SYNAPSE_FORCE_CPU` as a real fallback lever, not dead code. Dev target is a
+**~1.5B int4/GGUF** model on a 4 GB GPU, with CPU fallback for larger models.
 
 ---
 
